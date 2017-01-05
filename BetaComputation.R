@@ -8,7 +8,7 @@ pca_analysis <- function(Raw_Data)
   Omega <- aux$vectors
   PrincipalComponents <- t(Omega) %*% t(X)
   Reconstr_Data <- t(Omega %*% PrincipalComponents + mu)
-  return (list(Reconstr_Data = Reconstr_Data, Omega = Omega, PrincipalComponents = PrincipalComponents, D = diag(aux$values)))
+  return (list(Reconstr_Data = Reconstr_Data, Omega = Omega, PrincipalComponents = PrincipalComponents, EigenValues = diag(aux$values)))
 }
 
 #Do the PCA on all yields and plot the first 3 principal components
@@ -31,7 +31,7 @@ sigma_p <- cov(three.yields)
 omega_tilde <- three.pca$Omega
 #Compute dx.dp^T
 dx.dp <- dx.tilde %*% t(dx)
-dx.dp <- cbind(dx.dp,c(0,0.5,0))
+dx.dp <- cbind(dx.dp,c(0,0.0005,0))
 #Compute beta and beta inverse matrices
 beta.tilde <- omega_tilde*dx.dp*solve(sigma_p)
 beta.tilde.inv <- solve(beta.tilde)
