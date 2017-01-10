@@ -34,10 +34,10 @@ kappa.eigenvals.initial <- diag(c(0.01,0.5,0.6))
 #kappa.eigenvals.initial <- diag(c(0.037,0.631,0.630))
 
 # (2) u.r
-u.r <- 0.05
+u.r <- 0.01
 
 # (3) Mean Reversion Levels
-mean.rev.levels <- matrix(c(0.01, 0.02, 0.03), nrow=3, ncol=1)
+mean.rev.levels <- matrix(c(0.005, 0.008, 0.01), nrow=3, ncol=1)
 
 # (4) 3 most recent values of the MPR in order to calibrate the
 # m vector
@@ -104,11 +104,9 @@ constructFMatrix <- function(eigenvals, mats)
 
 #Given the 3 eigenvalues (l1,l2,l3) and their maturities (tau1, tau2, tau3)
 #We build the 3 x 3 mean reversion matrix K under Q measure 
-constructKappaQMatrix <- function(eigenvals, mats)
+constructKappaQMatrix <- function(eigenvals, f.matrix, mats)
 {
-  F.matrix <- constructFMatrix(eigenvals, mats)
-  kappa.Q <- beta.tilde.inv %*% F.matrix %*% eigenvals %*% solve(F.matrix) %*% beta.tilde
-  return (kappa.Q)
+  return (beta.tilde.inv %*% f.matrix %*% eigenvals %*% solve(f.matrix, tol=1e-19) %*% beta.tilde)
 }
 
 #Given the 3 eigenvalues (l1,l2,l3) and their maturities (tau1, tau2, tau3)
@@ -125,7 +123,7 @@ constructAffineAMatrix <- function(eigenvals, kappa.Q, F.matrix, tau)
   m.vector <- computeMVector()
   C <- computeSpMatrix()
   L <- beta.tilde.inv %*% F.matrix
-  L.inv <- solve(L)
+  L.inv <- solve(L, tol=1e-19)
   D.T <- diag(x=as.vector(diag2vec(1-exp(-eigenvals*tau))/diag2vec(eigenvals)), nrow=3, ncol=3)
   M <- L.inv %*% C %*% t(L.inv)
   F.T <- matrix(0,nrow=3,ncol=3)
@@ -143,94 +141,74 @@ constructAffineAMatrix <- function(eigenvals, kappa.Q, F.matrix, tau)
   I1 <- -u.r*tau
   I2 <- t(m.vector) %*% (L %*% solve(eigenvals) %*% D.T %*% eigenvals %*% L.inv %*% theta.p - theta.p * tau)
   I3a <- 0.5 * t(m.vector) %*% kappa.Q.inv %*% L %*% F.T %*% solve(eigenvals) %*% t(L) %*% m.vector
-  I3b <- -0.5 * t(m.vector) %*% kappa.Q.inv %*% C %*% t(solve(L)) %*% D.T %*% solve(eigenvals) %*% t(L) %*% m.vector
+  I3b <- -0.5 * t(m.vector) %*% kappa.Q.inv %*% C %*% t(L.inv) %*% D.T %*% solve(eigenvals) %*% t(L) %*% m.vector
   I3c <- -0.5 * t(m.vector) %*% kappa.Q.inv %*% L %*% D.T %*% L.inv %*% C %*% solve(t(kappa.Q)) %*% m.vector
   I3d <- 0.5 * tau * t(m.vector) %*% kappa.Q.inv %*% C %*% solve(t(kappa.Q)) %*% m.vector
   return (I1 + I2 + I3a + I3b + I3c + I3d)
 }
 
-computeModelZCBPrices <- function(eigenvals)
+computeModelZCBPrices <- function(eigenvals, mats)
 {
-  kappa.Q <- constructKappaQMatrix(eigenvals, maturities)
-  print("Kappa matrix in Q measure:")
-  print(kappa.Q)
-  print('######################')
-  
-  m.vector <- computeMVector()
-  print("m vector")
-  print(m.vector)
-  print('######################')
-  
-  F.matrix <- constructFMatrix(eigenvals, maturities)
-  print("F Matrix:")
-  print(F.matrix)
-  print('######################')
-  
-  B.tau <- rbind(constructAffineBMatrix(kappa.Q, maturities[1]),
-                 constructAffineBMatrix(kappa.Q, maturities[2]),
-                 constructAffineBMatrix(kappa.Q, maturities[3]))
-  print("B(t,T)^T Matrix:")
-  print(B.tau)
-  print('######################')
-  
+  F.matrix <- constructFMatrix(eigenvals, mats)
+  kappa.Q <- constructKappaQMatrix(eigenvals, F.matrix, mats)
+  B.tau <- constructAffineBMatrix(kappa.Q, mats[1])
+  for (m in mats[-1])
+  B.tau <- rbind(B.tau, constructAffineBMatrix(kappa.Q, m))
   #Get the state variables for t=0
-  x.0 <- c(tail(t(two.pca$PrincipalComponents))[1,], 0.01)
-  print("State variables for t=0:")
-  print(x.0)
-  print('######################')
-  
-  B.x.0 <- B.tau %*% x.0
-  print("B(t,T)^T*x_t:")
-  print(B.x.0)
-  print('######################')
-  
+  x.0 <- c(tail(t(two.pca$PrincipalComponents))[1,], lambda.t[1])
+  B.tT <- B.tau %*% x.0
   A.tT <- c(constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, maturities[1]),
             constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, maturities[2]),
             constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, maturities[3]))
-  print("A(t,T):")
-  print(A.tT)
-  print('######################')
-  
-  model.zero.coupon.bond.prices <- exp(A.tT + as.vector(B.x.0))
-  
-  print("Model Zero Coupon Bond Prices:")
-  print(model.zero.coupon.bond.prices)
-  print('######################')
-  
+  model.zero.coupon.bond.prices <- exp(A.tT + as.vector(B.tT))
   return (model.zero.coupon.bond.prices)
 }
 
-calibrateKappaQ <- function()
+min.RSS <- function(data, par)
 {
-  print('######################')
-  #Get the initial eigenvalues of kappa
-  kappa.eigenvals <- kappa.eigenvals.initial
-  print("Initial Eigenvalues:")
-  print(kappa.eigenvals)
-  print('######################')
+  #Maturities of the market bond prices
+  mats <- data$x
+  #Convert the initial eigenvalues into diagonal matrix
+  eigenvals <- vec2diag(par)
+  F.matrix <- constructFMatrix(eigenvals, mats)
+  kappa.Q <- constructKappaQMatrix(eigenvals, F.matrix, mats)
   
-  #Get the initial term structure. We assume that the valuation date or calibration date
-  #is the last date on which the data is available.
-  initial.term.structure <- tail(three.yields, 1)
-  print('Initial Term Structure:')
-  print(initial.term.structure)
-  print('######################')
+  B.tau <- rbind(constructAffineBMatrix(kappa.Q, mats[1]),
+                 constructAffineBMatrix(kappa.Q, mats[2]),
+                 constructAffineBMatrix(kappa.Q, mats[3]))
   
-  initial.zero.coupon.bond.prices <- exp(-initial.term.structure*maturities)
-  print('Initial ZCB Prices:')
-  print(initial.zero.coupon.bond.prices)
-  print('######################')
-  
-  model.zcb.prices <- computeModelZCBPrices(kappa.eigenvals)
-  
-  model.yields <- fromPricesToYields(model.zcb.prices, maturities)
-  
-  print("Model Yields:")
-  print(model.yields)
-  print('######################')
-  
+  #Get the state variables for t=0
+  x.0 <- c(tail(t(two.pca$PrincipalComponents))[1,], lambda.t[1])
+  B.tT <- B.tau %*% x.0
+  A.tT <- c(constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, mats[1]),
+            constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, mats[2]),
+            constructAffineAMatrix(eigenvals, kappa.Q, F.matrix, mats[3]))
+  model.zero.coupon.bond.prices <- exp(A.tT + as.vector(B.tT))
+  print( sum((model.zero.coupon.bond.prices - data$y)^2) )
+  print(model.zero.coupon.bond.prices)
+  return (sum((model.zero.coupon.bond.prices - data$y)^2))
 }
 
-calibrateKappaQ()
+
+#Get the initial eigenvalues of kappa
+kappa.eigenvals <- kappa.eigenvals.initial
+#Get the initial term structure. We assume that the valuation date or calibration date
+#is the last date on which the data is available.
+current.term.structure <- tail(three.yields, 1)
+current.zcb.prices <- exp(-current.term.structure*maturities)
+
+dat <- data.frame(x=maturities, y=t(current.zcb.prices))
+colnames(dat) <- c("x","y")
+fit <- optim(par=diag2vec(kappa.eigenvals.initial), min.RSS, data=dat, hessian=TRUE)
+zcb.prices <- computeModelZCBPrices(vec2diag(fit$par), maturities)
+zcb.prices
+
+#Compute confidence intervals for l1,l2,l3
+fisher_info<-solve(fit$hessian)
+prop_sigma<-sqrt(diag(fisher_info))
+upper<-fit$par+1.96*prop_sigma
+lower<-fit$par-1.96*prop_sigma
+interval<-data.frame(value=fit$par, upper=upper, lower=lower)
+interval
 
 
